@@ -30,7 +30,7 @@ dotenv.config({});
 // 2. Initialize Express App + HTTP Server + Socket.io
 const app = express();
 const httpServer = http.createServer(app);
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 8080;
 
 const io = new Server(httpServer, {
   cors: {
