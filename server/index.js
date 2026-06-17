@@ -9,7 +9,6 @@ import userRoute from "./routes/user.routes.js";
 import aiRoute from "./routes/aiRoutes.js";
 import authRoute from "./routes/auth.routes.js";
 import documentRoute from "./routes/documentRoutes.js";
-import quizRoute from "./routes/quizRoutes.js";
 import playgroundRoute from "./routes/playgroundRoutes.js";
 import curriculumRoute from "./routes/curriculumRoutes.js";
 import leaderboardRoute from "./routes/leaderboardRoutes.js";
@@ -17,7 +16,7 @@ import competitionRoutes from "./routes/competitionRoutes.js";
 import codeRoute from "./routes/codeRoutes.js";
 import chapterRoute from "./routes/chapterRoutes.js";
 import discussionRoutes from "./routes/discussionRoutes.js";
-import { initializeSocket } from "./socket/roomHandler.js";
+import { initializeSocket } from "./competition/socketHandler.js";
 import quizAttemptRoute from "./routes/quizAttemptRoutes.js";
 import questRoute from "./routes/questRoutes.js";
 import skillRoute from "./routes/skillRoute.js";
@@ -30,7 +29,7 @@ dotenv.config({});
 // 2. Initialize Express App + HTTP Server + Socket.io
 const app = express();
 const httpServer = http.createServer(app);
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT;
 
 const io = new Server(httpServer, {
   cors: {
@@ -69,7 +68,6 @@ app.use("/api/v1/user", userRoute);
 app.use("/api/v1/auth", authRoute);
 app.use("/api/v1/ai", aiRoute);
 app.use("/api/v1/documents", documentRoute);
-app.use("/api/v1/quiz", quizRoute);
 app.use("/api/v1/quiz-attempts", quizAttemptRoute);
 app.use("/api/v1/playground", playgroundRoute);
 app.use("/api/v1/curriculum", curriculumRoute);

@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useEffect } from "react";
+// eslint-disable-next-line no-unused-vars
 import { motion, animate } from "motion/react";
 import { PieChart, LineChart, BarChart } from "@mui/x-charts";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { Trophy, Swords, Target, Flame, Star, Shield } from "lucide-react";
 import { ShineBorder } from "@/components/ui/shine-border";
-import api from "../../../features/auth/authApi";
+import { useCompetitionStats } from "@/features/competition/useCompetition";
 
 const BAR_COLORS = ["#f97316", "#3b82f6", "#10b981", "#8b5cf6", "#ec4899"];
 
@@ -14,6 +15,7 @@ const getGamerRank = (wins) => {
       name: "Grand Champion",
       gradient: "from-purple-400 to-pink-600",
       text: "text-purple-400",
+
       border: "border-purple-500/50",
       shine: ["#a855f7", "#ec4899"],
     };
@@ -77,22 +79,8 @@ const darkTheme = createTheme({
 });
 
 const CompetitionStats = () => {
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const response = await api.get("/competition/stats");
-        if (response.success) setStats(response.data.stats);
-      } catch (error) {
-        console.error("Error fetching competition stats:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStats();
-  }, []);
+  const { data: statsData, isLoading: loading } = useCompetitionStats();
+  const stats = statsData?.data?.stats || null;
 
   if (loading) return <StatsSkeleton />;
   if (!stats || stats.totalGames === 0) return <EmptyStats />;
@@ -120,14 +108,14 @@ const CompetitionStats = () => {
     {
       title: "Matches",
       value: stats.totalGames,
-
+      icon: <Swords size={16} />,
       iconBg: "bg-blue-500/15 text-blue-400",
       numberClass: "text-metallic",
     },
     {
       title: "Wins",
       value: stats.wins,
-
+      icon: <Trophy size={16} />,
       iconBg: "bg-yellow-500/15 text-yellow-400",
       numberClass: "text-metallic-orange",
       tag: `${stats.winRate}% WR`,
@@ -135,14 +123,14 @@ const CompetitionStats = () => {
     {
       title: "Streak",
       value: stats.currentStreak,
-
+      icon: <Flame size={16} />,
       iconBg: "bg-orange-500/15 text-orange-400",
       numberClass: "text-metallic-orange",
     },
     {
       title: "Best Score",
       value: stats.bestScore,
-
+      icon: <Target size={16} />,
       iconBg: "bg-purple-500/15 text-purple-400",
       numberClass: "text-metallic",
       tag: `avg ${stats.avgScore}`,

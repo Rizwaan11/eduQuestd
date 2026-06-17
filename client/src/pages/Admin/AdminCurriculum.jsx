@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getCurriculum,
   getCurriculumsMetadata,
@@ -12,24 +13,49 @@ import {
   updateProblem,
   deleteProblem,
   generateProblems,
-  clearPlaygroundCache,
 } from "../../features/playground/playgroundApi";
 import { getAdminCourses } from "../../features/workspace/courseApi";
 import { motion, AnimatePresence } from "framer-motion";
 import toast from "react-hot-toast";
 import {
   Code, Edit3, Plus, Trash2, Save, X, Settings,
-  ChevronDown, ChevronRight, Layers, Link, Sparkles,
+  ChevronDown, ChevronRight, Layers, Sparkles,
   Loader2, BookOpen, PenLine,
 } from "lucide-react";
 
-const LANG_LABEL = (lang) => lang.charAt(0).toUpperCase() + lang.slice(1);
+// Display label for a language key
+const LANG_LABEL = (lang) => {
+  const found = [...CODE_RUNNER_LANGS, ...LIVE_PREVIEW_LANGS].find((l) => l.key === lang);
+  return found ? found.label : lang.charAt(0).toUpperCase() + lang.slice(1);
+};
+
+// Languages supported by the self-hosted Piston instance (mirrors server/routes/codeRoutes.js PISTON_LANG_MAP)
+const CODE_RUNNER_LANGS = [
+  { key: "javascript", label: "JavaScript" },
+  { key: "typescript", label: "TypeScript" },
+  { key: "python",     label: "Python"     },
+  { key: "java",       label: "Java"       },
+  { key: "c++",        label: "C++"        },
+  { key: "c",          label: "C"          },
+  { key: "go",         label: "Go"         },
+  { key: "rust",       label: "Rust"       },
+  { key: "kotlin",     label: "Kotlin"     },
+  { key: "ruby",       label: "Ruby"       },
+  { key: "php",        label: "PHP"        },
+  { key: "csharp",     label: "C#"         },
+  { key: "swift",      label: "Swift"      },
+  { key: "dart",       label: "Dart"       },
+];
+
+const LIVE_PREVIEW_LANGS = [
+  { key: "html",  label: "HTML"  },
+  { key: "css",   label: "CSS"   },
+];
 
 const EXECUTION_MODES = [
-  { value: "piston",      label: "Code Runner",    desc: "Python, Java, C++, Go, Rust, TS… Output printed to terminal." },
+  { value: "piston",      label: "Code Runner",    desc: "Compiled & interpreted languages — output printed to terminal." },
   { value: "livepreview", label: "Live Preview",   desc: "HTML / CSS — renders inside a browser iframe with live updates." },
   { value: "react",       label: "React Preview",  desc: "React/JSX — iframe with Babel + ReactDOM. Full component preview." },
-  { value: "dsa",         label: "DSA Multi-lang", desc: "Algorithms — starter code in JS + Python + Java, runs via Piston." },
 ];
 
 // Full Tailwind class strings (no template interpolation — JIT needs literal strings)
@@ -37,33 +63,28 @@ const MODE_BADGE = {
   piston:      "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
   livepreview: "text-sky-400 bg-sky-500/10 border-sky-500/30",
   react:       "text-cyan-400 bg-cyan-500/10 border-cyan-500/30",
-  dsa:         "text-violet-400 bg-violet-500/10 border-violet-500/30",
 };
 const MODE_ACTIVE = {
   piston:      "border-emerald-500/50 bg-emerald-500/15 text-emerald-400",
   livepreview: "border-sky-500/50 bg-sky-500/15 text-sky-400",
   react:       "border-cyan-500/50 bg-cyan-500/15 text-cyan-400",
-  dsa:         "border-violet-500/50 bg-violet-500/15 text-violet-400",
 };
 const MODE_CARD_ACTIVE = {
   piston:      "border-emerald-500/60 bg-emerald-500/10",
   livepreview: "border-sky-500/60 bg-sky-500/10",
   react:       "border-cyan-500/60 bg-cyan-500/10",
-  dsa:         "border-violet-500/60 bg-violet-500/10",
 };
 const MODE_LABEL = {
   piston:      "text-emerald-400",
   livepreview: "text-sky-400",
   react:       "text-cyan-400",
-  dsa:         "text-violet-400",
 };
 
 const inputCls = "w-full bg-[#0a0a0a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500 text-sm";
 
 // ── Problem Modal ─────────────────────────────────────────────────────────────
-function ProblemModal({ problem: init, language, chapterId, onClose, onSaved, courses }) {
+function ProblemModal({ problem: init, language, chapterId, onClose, onSaved }) {
   const [p, setP] = useState({
-    courseChapterLink: { courseId: null, chapterIndex: null },
     hints: [""],
     ...init,
   });
@@ -89,8 +110,6 @@ function ProblemModal({ problem: init, language, chapterId, onClose, onSaved, co
     } catch { toast.error("Failed to save problem"); }
     finally { setSaving(false); }
   };
-
-  const linkedCourse = courses.find((c) => c.courseId === p.courseChapterLink?.courseId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -142,12 +161,12 @@ function ProblemModal({ problem: init, language, chapterId, onClose, onSaved, co
 
           {/* Starter Code */}
           <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">Starter Code {language === "dsa" ? "(JSON: {javascript, python, java})" : ""}</label>
+            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">Starter Code</label>
             <textarea
               className={`${inputCls} min-h-[120px] resize-y font-mono text-emerald-400`}
-              value={typeof p.starterCode === "object" ? JSON.stringify(p.starterCode, null, 2) : (p.starterCode || "")}
+              value={typeof p.starterCode === "string" ? p.starterCode : ""}
               onChange={(e) => set("starterCode", e.target.value)}
-              placeholder={language === "dsa" ? '{"javascript":"...","python":"...","java":"..."}' : "function example() { }"}
+              placeholder="// starter code shown to the student"
             />
           </div>
 
@@ -172,40 +191,6 @@ function ProblemModal({ problem: init, language, chapterId, onClose, onSaved, co
               <textarea className={`${inputCls} min-h-[80px] resize-y font-mono text-orange-400`} value={p.baseHtml || ""} onChange={(e) => set("baseHtml", e.target.value)} placeholder="<div id='box'></div>" />
             </div>
           )}
-
-          {/* Course Chapter Link */}
-          <div className="border border-indigo-500/20 rounded-xl p-4 bg-indigo-950/20">
-            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-3 flex items-center gap-2">
-              <Link size={11} /> Link to Course Chapter <span className="text-indigo-600 normal-case font-normal">(optional — shows problem in that chapter's Practice section)</span>
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">Course</label>
-                <select
-                  className={inputCls}
-                  value={p.courseChapterLink?.courseId || ""}
-                  onChange={(e) => set("courseChapterLink", { courseId: e.target.value || null, chapterIndex: null })}
-                >
-                  <option value="">No link</option>
-                  {courses.map((c) => <option key={c.courseId} value={c.courseId}>{c.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">Chapter</label>
-                <select
-                  className={inputCls}
-                  value={p.courseChapterLink?.chapterIndex ?? ""}
-                  disabled={!p.courseChapterLink?.courseId}
-                  onChange={(e) => set("courseChapterLink", { ...p.courseChapterLink, chapterIndex: e.target.value === "" ? null : Number(e.target.value) })}
-                >
-                  <option value="">Select chapter</option>
-                  {(linkedCourse?.courseOutput?.chapters || []).map((ch, i) => (
-                    <option key={i} value={i}>Ch {i + 1}: {ch.chapterName || ch.title || `Chapter ${i + 1}`}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
 
           {/* Hints */}
           <div>
@@ -323,12 +308,14 @@ function ChapterRow({ chapter, language, expanded, onToggle, onEdit, onDelete, o
 
 // ── Main Component ────────────────────────────────────────────────────────────
 const AdminCurriculum = () => {
+  const queryClient = useQueryClient();
   const [selectedLanguage, setSelectedLanguage] = useState(null);
   const [curriculum, setCurriculum] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedChapter, setExpandedChapter] = useState(null);
   const [courses, setCourses] = useState([]);
   const [existingLanguages, setExistingLanguages] = useState([]);
+  const [playgroundsMetadata, setPlaygroundsMetadata] = useState([]);
 
   // Problem modal
   const [problemModal, setProblemModal] = useState(null);
@@ -340,34 +327,33 @@ const AdminCurriculum = () => {
 
   // AI generate
   const [generatingChapterId, setGeneratingChapterId] = useState(null);
-  const [generateCount, setGenerateCount] = useState(3);
+  const [generateCount, setGenerateCount] = useState(2);
 
   // Create curriculum modal
   const [createModal, setCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState({ language: "", title: "", subtitle: "", executionMode: "piston", pistonLanguage: "" });
+  const [createForm, setCreateForm] = useState({ language: "", title: "", executionMode: "piston" });
   const [creatingCurriculum, setCreatingCurriculum] = useState(false);
 
   // Execution mode edit
   const [modeEditOpen, setModeEditOpen] = useState(false);
   const [savingMode, setSavingMode] = useState(false);
-  const [pistonLangEdit, setPistonLangEdit] = useState("");
 
   // Load metadata (all existing playgrounds) + courses
   useEffect(() => {
     getAdminCourses().then((d) => setCourses(d || [])).catch(() => {});
     getCurriculumsMetadata()
       .then((res) => {
-        const langs = (res.metadata || []).map((m) => m.language);
-        setExistingLanguages(langs);
-        if (langs.length > 0) setSelectedLanguage(langs[0]);
-        else setIsLoading(false);
+        const meta = res.metadata || [];
+        setPlaygroundsMetadata(meta);
+        setExistingLanguages(meta.map((m) => m.language));
+        setIsLoading(false);
       })
       .catch(() => setIsLoading(false));
   }, []);
 
   const fetchCurriculum = async (lang) => {
     setIsLoading(true);
-    clearPlaygroundCache();
+    queryClient.invalidateQueries({ queryKey: ["curriculum", lang] });
     try {
       const res = await getCurriculum(lang);
       setCurriculum(res.curriculum || null);
@@ -375,20 +361,23 @@ const AdminCurriculum = () => {
     finally { setIsLoading(false); }
   };
 
-  useEffect(() => { fetchCurriculum(selectedLanguage); }, [selectedLanguage]);
+  useEffect(() => { if (selectedLanguage) fetchCurriculum(selectedLanguage); }, [selectedLanguage]);
 
   // ── Curriculum create ──
   const handleCreateCurriculum = async () => {
-    const lang = createForm.language.trim().toLowerCase();
-    if (!lang) { toast.error("Enter a language name"); return; }
+    const lang = createForm.executionMode === "react" ? "react" : createForm.language.trim().toLowerCase();
+    if (!lang) { toast.error("Select a language"); return; }
     if (!createForm.title.trim()) { toast.error("Title required"); return; }
     setCreatingCurriculum(true);
     try {
-      await createCurriculum({ language: lang, title: createForm.title, subtitle: createForm.subtitle, executionMode: createForm.executionMode, pistonLanguage: createForm.pistonLanguage?.trim() || null });
+      await createCurriculum({ language: lang, title: createForm.title, executionMode: createForm.executionMode });
       toast.success("Playground created!");
-      setExistingLanguages((prev) => prev.includes(lang) ? prev : [...prev, lang]);
+      const metaRes = await getCurriculumsMetadata();
+      const meta = metaRes.metadata || [];
+      setPlaygroundsMetadata(meta);
+      setExistingLanguages(meta.map((m) => m.language));
       setCreateModal(false);
-      setCreateForm({ language: "", title: "", subtitle: "" });
+      setCreateForm({ language: "", title: "", executionMode: "piston" });
       setSelectedLanguage(lang);
     } catch (e) { toast.error(e?.response?.data?.message || "Failed to create playground"); }
     finally { setCreatingCurriculum(false); }
@@ -454,27 +443,18 @@ const AdminCurriculum = () => {
     finally { setSavingMode(false); }
   };
 
-  const handleSavePistonLang = async () => {
-    setSavingMode(true);
-    try {
-      const res = await updateCurriculumSettings(selectedLanguage, { pistonLanguage: pistonLangEdit.trim() || null });
-      setCurriculum(res.curriculum);
-      toast.success("Piston language ID updated");
-      setModeEditOpen(false);
-    } catch { toast.error("Failed to update"); }
-    finally { setSavingMode(false); }
-  };
-
   // ── Curriculum delete ──
   const handleDeleteCurriculum = async () => {
     if (!window.confirm(`Delete the entire ${LANG_LABEL(selectedLanguage)} playground and all its chapters/problems? This cannot be undone.`)) return;
     try {
       await deleteCurriculum(selectedLanguage);
-      clearPlaygroundCache();
+      queryClient.invalidateQueries({ queryKey: ["curriculum", selectedLanguage] });
+      queryClient.invalidateQueries({ queryKey: ["curriculum", "metadata"] });
       toast.success(`${LANG_LABEL(selectedLanguage)} playground deleted`);
       const remaining = existingLanguages.filter((l) => l !== selectedLanguage);
       setExistingLanguages(remaining);
-      setSelectedLanguage(remaining[0] || null);
+      setPlaygroundsMetadata((prev) => prev.filter((p) => p.language !== selectedLanguage));
+      setSelectedLanguage(null);
       setCurriculum(null);
     } catch { toast.error("Failed to delete playground"); }
   };
@@ -485,143 +465,135 @@ const AdminCurriculum = () => {
 
       {/* Header */}
       <div className="max-w-6xl mx-auto px-6 mb-8">
-        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-3">
-              <Settings className="text-indigo-500 w-8 h-8" />
-              Playground Manager
-            </h1>
-            <p className="text-zinc-400 mt-1 text-sm">Manage language playgrounds. Optionally link problems to course chapters.</p>
-          </div>
-
-          <div className="flex flex-col gap-3 items-end">
-            <div className="flex items-center gap-3">
-              {/* AI count selector */}
-              <div className="flex items-center gap-2 text-xs text-zinc-400 bg-[#111] border border-white/10 rounded-lg px-3 py-2">
-                <Sparkles size={11} className="text-indigo-400" />
-                <span>AI:</span>
-                <select
-                  value={generateCount}
-                  onChange={(e) => setGenerateCount(Number(e.target.value))}
-                  className="bg-transparent text-white text-xs focus:outline-none"
-                >
-                  {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <span>problems/chapter</span>
-              </div>
-
-              {/* New Playground button — always visible */}
+            {selectedLanguage && (
               <button
-                onClick={() => { setCreateForm({ language: "", title: "", subtitle: "", executionMode: "piston", pistonLanguage: "" }); setCreateModal(true); }}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-colors whitespace-nowrap"
+                onClick={() => { setSelectedLanguage(null); setCurriculum(null); }}
+                className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-2 transition-colors"
               >
-                <Plus size={15} /> New Playground
+                ← Playground Management
               </button>
-            </div>
-
-            {/* Language tabs — one per existing playground */}
-            {existingLanguages.length > 0 && (
-              <div className="flex gap-1 p-1 bg-[#111111] border border-white/10 rounded-xl overflow-x-auto max-w-[600px]">
-                {existingLanguages.map((lang) => (
-                  <button
-                    key={lang}
-                    onClick={() => setSelectedLanguage(lang)}
-                    className={`px-4 py-1.5 rounded-lg font-bold text-sm capitalize whitespace-nowrap transition-all ${
-                      selectedLanguage === lang
-                        ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                        : "text-zinc-400 hover:text-white hover:bg-white/5"
-                    }`}
-                  >
-                    {LANG_LABEL(lang)}
-                  </button>
-                ))}
-              </div>
             )}
+            <h1 className="text-3xl font-bold tracking-tight">Playground Management</h1>
+            <p className="text-zinc-400 text-sm mt-1">Create and manage language practice environments for students</p>
           </div>
+          <button
+            onClick={() => { setCreateForm({ language: "", title: "", executionMode: "piston" }); setCreateModal(true); }}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-colors"
+          >
+            <Plus size={15} /> New Playground
+          </button>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-6">
         {isLoading ? (
           <div className="h-64 flex items-center justify-center">
-            <Loader2 className="w-8 h-8 border-indigo-500 animate-spin text-indigo-500" />
+            <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
           </div>
-        ) : !curriculum ? (
-          <div className="flex flex-col items-center justify-center py-20 border border-dashed border-white/10 rounded-2xl gap-4">
-            <BookOpen className="w-10 h-10 text-zinc-600" />
-            <div className="text-center">
-              {existingLanguages.length === 0 ? (
-                <>
-                  <p className="font-bold text-zinc-300">No playgrounds yet</p>
-                  <p className="text-sm text-zinc-500 mt-1">Click <span className="text-indigo-400 font-bold">New Playground</span> to create your first one.</p>
-                </>
-              ) : (
-                <>
-                  <p className="font-bold text-zinc-300">No {LANG_LABEL(selectedLanguage)} playground</p>
-                  <p className="text-sm text-zinc-500 mt-1">Click <span className="text-indigo-400 font-bold">New Playground</span> in the top-right to create one.</p>
-                </>
-              )}
+        ) : !selectedLanguage ? (
+          /* ── GRID VIEW ── */
+          playgroundsMetadata.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/10 rounded-2xl gap-4">
+              <BookOpen className="w-12 h-12 text-zinc-600" />
+              <div className="text-center">
+                <p className="font-bold text-zinc-400">No playgrounds yet</p>
+                <p className="text-sm text-zinc-600 mt-1">Click <span className="text-indigo-400 font-bold">New Playground</span> to create your first one.</p>
+              </div>
+              <button
+                onClick={() => { setCreateForm({ language: "", title: "", executionMode: "piston" }); setCreateModal(true); }}
+                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-colors"
+              >
+                <Plus size={14} /> New Playground
+              </button>
             </div>
-            <button
-              onClick={() => { setCreateForm({ language: selectedLanguage || "", title: "", subtitle: "" }); setCreateModal(true); }}
-              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-colors"
-            >
-              <Plus size={14} /> New Playground
-            </button>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {playgroundsMetadata.map((pg) => (
+                <div key={pg.language} className="bg-[#111] border border-white/10 rounded-2xl p-5 flex flex-col gap-3 hover:border-white/20 transition-colors">
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="text-sm font-bold text-white leading-tight">{pg.title}</h3>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 capitalize ${MODE_BADGE[pg.executionMode] || MODE_BADGE.piston}`}>
+                      {EXECUTION_MODES.find((m) => m.value === pg.executionMode)?.label || "Code Runner"}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/5 text-zinc-400 border border-white/5">{pg.totalChapters} chapters</span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/5 text-zinc-400 border border-white/5">{pg.totalProblems} problems</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-auto pt-2">
+                    <button
+                      onClick={() => setSelectedLanguage(pg.language)}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-bold transition-colors border border-white/5"
+                    >
+                      <PenLine className="w-3.5 h-3.5" /> View / Edit
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Delete the ${LANG_LABEL(pg.language)} playground and all its chapters/problems? This cannot be undone.`)) return;
+                        try {
+                          await deleteCurriculum(pg.language);
+                          setPlaygroundsMetadata((prev) => prev.filter((p) => p.language !== pg.language));
+                          setExistingLanguages((prev) => prev.filter((l) => l !== pg.language));
+                          toast.success(`${LANG_LABEL(pg.language)} playground deleted`);
+                        } catch { toast.error("Failed to delete playground"); }
+                      }}
+                      className="flex items-center justify-center px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-bold border border-red-500/20 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         ) : (
+          /* ── DETAIL VIEW ── */
           <div className="space-y-5">
+            {!curriculum ? (
+              <div className="flex flex-col items-center justify-center py-20 border border-dashed border-white/10 rounded-2xl gap-4">
+                <BookOpen className="w-10 h-10 text-zinc-600" />
+                <p className="font-bold text-zinc-300">No {LANG_LABEL(selectedLanguage)} playground</p>
+                <button
+                  onClick={() => { setCreateForm({ language: selectedLanguage, title: "", executionMode: "piston" }); setCreateModal(true); }}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-colors"
+                >
+                  <Plus size={14} /> New Playground
+                </button>
+              </div>
+            ) : (
+            <div className="space-y-5">
             {/* Curriculum header */}
             <div className="bg-[#111] border border-white/10 rounded-2xl p-5 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold">{curriculum.title}</h2>
                 {curriculum.subtitle && <p className="text-sm text-zinc-400 mt-0.5">{curriculum.subtitle}</p>}
-                {/* Execution mode badge + change */}
                 <div className="mt-2 flex items-center gap-2">
                   {!modeEditOpen ? (
                     <>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border capitalize ${MODE_BADGE[curriculum.executionMode] || MODE_BADGE.piston}`}>
                         {EXECUTION_MODES.find(m => m.value === (curriculum.executionMode || "piston"))?.label || curriculum.executionMode || "piston"}
                       </span>
-                      {curriculum.pistonLanguage && (
-                        <span className="text-[10px] text-zinc-500 font-mono">id: {curriculum.pistonLanguage}</span>
-                      )}
-                      <button onClick={() => { setModeEditOpen(true); setPistonLangEdit(curriculum.pistonLanguage || ""); }} className="text-[10px] text-zinc-500 hover:text-zinc-300 underline transition-colors">change mode</button>
+                      <button onClick={() => setModeEditOpen(true)} className="text-[10px] text-zinc-500 hover:text-zinc-300 underline transition-colors">change mode</button>
                     </>
                   ) : (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex flex-wrap gap-1.5 items-center">
-                        {EXECUTION_MODES.map((m) => (
-                          <button
-                            key={m.value}
-                            disabled={savingMode}
-                            onClick={() => handleSaveMode(m.value)}
-                            className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all disabled:opacity-50 ${
-                              (curriculum.executionMode || "piston") === m.value
-                                ? MODE_ACTIVE[m.value]
-                                : "border-white/10 text-zinc-400 hover:border-white/20 hover:text-zinc-200"
-                            }`}
-                          >
-                            {savingMode ? <Loader2 size={10} className="animate-spin inline mr-1" /> : null}{m.label}
-                          </button>
-                        ))}
-                        <button onClick={() => setModeEditOpen(false)} className="text-[10px] text-zinc-600 hover:text-zinc-400 ml-1">cancel</button>
-                      </div>
-                      {/* Piston Language ID override */}
-                      {(curriculum.executionMode === "piston" || curriculum.executionMode === "dsa" || !curriculum.executionMode) && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-zinc-500">Piston ID:</span>
-                          <input
-                            className="bg-[#0a0a0a] border border-white/10 rounded-lg px-2.5 py-1 text-white text-[10px] font-mono focus:outline-none focus:border-indigo-500 w-36"
-                            value={pistonLangEdit}
-                            onChange={(e) => setPistonLangEdit(e.target.value)}
-                            placeholder={`e.g. c++, csharp`}
-                          />
-                          <button onClick={handleSavePistonLang} disabled={savingMode} className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:border-indigo-500/50 disabled:opacity-50 transition-colors flex items-center gap-1">
-                            {savingMode ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />} Save
-                          </button>
-                        </div>
-                      )}
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      {EXECUTION_MODES.map((m) => (
+                        <button
+                          key={m.value}
+                          disabled={savingMode}
+                          onClick={() => handleSaveMode(m.value)}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all disabled:opacity-50 ${
+                            (curriculum.executionMode || "piston") === m.value
+                              ? MODE_ACTIVE[m.value]
+                              : "border-white/10 text-zinc-400 hover:border-white/20 hover:text-zinc-200"
+                          }`}
+                        >
+                          {savingMode ? <Loader2 size={10} className="animate-spin inline mr-1" /> : null}{m.label}
+                        </button>
+                      ))}
+                      <button onClick={() => setModeEditOpen(false)} className="text-[10px] text-zinc-600 hover:text-zinc-400 ml-1">cancel</button>
                     </div>
                   )}
                 </div>
@@ -640,7 +612,6 @@ const AdminCurriculum = () => {
                 <button
                   onClick={handleDeleteCurriculum}
                   className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 font-bold text-sm rounded-xl border border-red-500/20 transition-colors"
-                  title={`Delete ${LANG_LABEL(selectedLanguage)} playground`}
                 >
                   <Trash2 size={15} /> Delete Playground
                 </button>
@@ -678,6 +649,8 @@ const AdminCurriculum = () => {
                 />
               ))}
             </div>
+          </div>
+            )}
           </div>
         )}
       </div>
@@ -723,7 +696,6 @@ const AdminCurriculum = () => {
           chapterId={problemModal.chapterId}
           onClose={() => setProblemModal(null)}
           onSaved={() => fetchCurriculum(selectedLanguage)}
-          courses={courses}
         />
       )}
 
@@ -733,7 +705,7 @@ const AdminCurriculum = () => {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-md bg-[#111] border border-white/10 rounded-2xl shadow-2xl p-6"
+            className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-[#111] border border-white/10 rounded-2xl shadow-2xl p-6"
           >
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-bold text-lg flex items-center gap-2">
@@ -742,54 +714,8 @@ const AdminCurriculum = () => {
               <button onClick={() => setCreateModal(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">Language Name</label>
-                <input
-                  className={inputCls}
-                  value={createForm.language}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, language: e.target.value }))}
-                  placeholder="e.g. java, typescript, rust, kotlin…"
-                  autoFocus
-                />
-                {/* Quick-pick suggestions */}
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {["typescript", "java", "rust", "kotlin", "go", "c++", "swift"].filter(
-                    (l) => !existingLanguages.includes(l)
-                  ).map((lang) => (
-                    <button
-                      key={lang}
-                      type="button"
-                      onClick={() => setCreateForm((f) => ({ ...f, language: lang }))}
-                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-white/10 text-zinc-400 hover:border-indigo-500/50 hover:text-indigo-300 transition-colors"
-                    >
-                      {lang}
-                    </button>
-                  ))}
-                </div>
-                {existingLanguages.includes(createForm.language.trim().toLowerCase()) && createForm.language.trim() && (
-                  <p className="text-xs text-amber-400 mt-1.5">⚠ A playground for this language already exists. Creating will fail — delete the existing one first.</p>
-                )}
-              </div>
-
-              {/* Piston Language ID override — only for code runner modes */}
-              {(createForm.executionMode === "piston" || createForm.executionMode === "dsa") && (
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">
-                    Piston Language ID <span className="text-zinc-600 normal-case font-normal">(optional — only if name differs)</span>
-                  </label>
-                  <input
-                    className={inputCls}
-                    value={createForm.pistonLanguage}
-                    onChange={(e) => setCreateForm((f) => ({ ...f, pistonLanguage: e.target.value }))}
-                    placeholder={`Leave blank to use "${createForm.language || "language name"}" · or set e.g. c++, csharp, typescript`}
-                  />
-                  <p className="text-[10px] text-zinc-600 mt-1">
-                    Supported IDs: javascript · python · java · c++ · c · typescript · go · rust · kotlin · swift · ruby · php · csharp · bash · r · lua · perl · haskell · scala · dart
-                  </p>
-                </div>
-              )}
-              {/* Execution Mode */}
+            <div className="space-y-5">
+              {/* Step 1 — Execution Mode */}
               <div>
                 <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-2">Execution Mode</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -797,7 +723,7 @@ const AdminCurriculum = () => {
                     <button
                       key={m.value}
                       type="button"
-                      onClick={() => setCreateForm((f) => ({ ...f, executionMode: m.value }))}
+                      onClick={() => setCreateForm((f) => ({ ...f, executionMode: m.value, language: "" }))}
                       className={`text-left p-3 rounded-xl border transition-all ${
                         createForm.executionMode === m.value
                           ? MODE_CARD_ACTIVE[m.value]
@@ -811,29 +737,45 @@ const AdminCurriculum = () => {
                 </div>
               </div>
 
+              {/* Step 2 — Language */}
+              {createForm.executionMode !== "react" && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-2">Language</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(createForm.executionMode === "piston" ? CODE_RUNNER_LANGS : LIVE_PREVIEW_LANGS).map((l) => (
+                      <button
+                        key={l.key}
+                        type="button"
+                        onClick={() => setCreateForm((f) => ({ ...f, language: l.key }))}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                          createForm.language === l.key
+                            ? "bg-indigo-500/15 border-indigo-500/50 text-indigo-400"
+                            : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
+                        }`}
+                      >
+                        {l.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3 — Title */}
               <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">Title</label>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">Title <span className="text-red-400">*</span></label>
                 <input
                   className={inputCls}
                   value={createForm.title}
                   onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))}
-                  placeholder={createForm.language ? `${LANG_LABEL(createForm.language)} Programming` : "e.g. Python Programming"}
+                  placeholder="e.g. Python Programming"
                 />
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1.5">Subtitle (optional)</label>
-                <input
-                  className={inputCls}
-                  value={createForm.subtitle}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, subtitle: e.target.value }))}
-                  placeholder="Beginner to Advanced"
-                />
-              </div>
+
               <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
                 <button onClick={() => setCreateModal(false)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white hover:bg-white/5 rounded-lg font-bold transition-colors">Cancel</button>
                 <button
                   onClick={handleCreateCurriculum}
-                  disabled={creatingCurriculum || !createForm.language.trim()}
+                  disabled={creatingCurriculum || !createForm.language.trim() || !createForm.title.trim()}
                   className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg flex items-center gap-2 disabled:opacity-50 transition-colors"
                 >
                   {creatingCurriculum ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}

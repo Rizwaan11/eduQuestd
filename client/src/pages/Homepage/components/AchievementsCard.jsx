@@ -3,142 +3,7 @@ import { createPortal } from "react-dom";
 import { useSelector } from "react-redux";
 import { Lock, X, ChevronRight, Trophy } from "lucide-react";
 import { motion } from "framer-motion";
-
-const ACHIEVEMENTS = [
-  {
-    key: "xp_olympian",
-    name: "XP Olympian",
-    icon: "/mostxp.svg",
-    description: "Earn XP to prove your dedication",
-    metric: "xp",
-    tiers: [
-      { level: 1, threshold: 100, label: "Bronze" },
-      { level: 2, threshold: 250, label: "Silver" },
-      { level: 3, threshold: 500, label: "Gold" },
-      { level: 4, threshold: 1000, label: "Platinum" },
-      { level: 5, threshold: 2500, label: "Diamond" },
-    ],
-  },
-  {
-    key: "legend",
-    name: "Legend",
-    icon: "/achievements/legend.svg",
-    description: "Reach higher levels to become a legend",
-    metric: "level",
-    tiers: [
-      { level: 1, threshold: 1, label: "Awakened" },
-      { level: 2, threshold: 5, label: "Rising" },
-      { level: 3, threshold: 10, label: "Veteran" },
-      { level: 4, threshold: 25, label: "Elite" },
-      { level: 5, threshold: 50, label: "Legendary" },
-    ],
-  },
-  {
-    key: "quest_explorer",
-    name: "Quest Explorer",
-    icon: "/achievements/quest-explorer.svg",
-    description: "Complete quests to unlock rewards",
-    metric: "questsCompleted",
-    tiers: [
-      { level: 1, threshold: 1, label: "Beginner" },
-      { level: 2, threshold: 2, label: "Curious" },
-      { level: 3, threshold: 5, label: "Adventurer" },
-      { level: 4, threshold: 10, label: "Explorer" },
-      { level: 5, threshold: 25, label: "Master" },
-    ],
-  },
-  {
-    key: "streak_warrior",
-    name: "Streak Warrior",
-    description: "Maintain your daily solving streak",
-    metric: "dayStreak",
-    tiers: [
-      { level: 1, threshold: 3, label: "Warm Up" },
-      { level: 2, threshold: 7, label: "On Fire" },
-      { level: 3, threshold: 14, label: "Blazing" },
-      { level: 4, threshold: 30, label: "Inferno" },
-      { level: 5, threshold: 100, label: "Eternal" },
-    ],
-  },
-  {
-    key: "problem_crusher",
-    name: "Problem Crusher",
-    description: "Solve problems across all playgrounds",
-    metric: "totalSolved",
-    tiers: [
-      { level: 1, threshold: 1, label: "First Step" },
-      { level: 2, threshold: 10, label: "Solver" },
-      { level: 3, threshold: 50, label: "Grinder" },
-      { level: 4, threshold: 100, label: "Centurion" },
-      { level: 5, threshold: 500, label: "Elite" },
-    ],
-  },
-  {
-    key: "competitor",
-    name: "Competitor",
-    description: "Win competition matches",
-    metric: "totalWins",
-    tiers: [
-      { level: 1, threshold: 1, label: "Rookie" },
-      { level: 2, threshold: 5, label: "Fighter" },
-      { level: 3, threshold: 10, label: "Gladiator" },
-      { level: 4, threshold: 25, label: "Champion" },
-      { level: 5, threshold: 50, label: "Warlord" },
-    ],
-  },
-  {
-    key: "polyglot",
-    name: "Polyglot",
-    description: "Master multiple programming languages",
-    metric: "polyglot",
-    tiers: [
-      { level: 1, threshold: 1, label: "Mono" },
-      { level: 2, threshold: 2, label: "Bilingual" },
-      { level: 3, threshold: 3, label: "Trilingual" },
-      { level: 4, threshold: 4, label: "Polyglot" },
-      { level: 5, threshold: 6, label: "Wizard" },
-    ],
-  },
-  {
-    key: "scholar",
-    name: "Scholar",
-    description: "Complete courses to expand your knowledge",
-    metric: "learner",
-    tiers: [
-      { level: 1, threshold: 1, label: "Apprentice" },
-      { level: 2, threshold: 3, label: "Student" },
-      { level: 3, threshold: 5, label: "Scholar" },
-      { level: 4, threshold: 10, label: "Professor" },
-      { level: 5, threshold: 20, label: "Academic" },
-    ],
-  },
-  {
-    key: "chapter_master",
-    name: "Chapter Master",
-    description: "Complete course chapters",
-    metric: "chapters_completed",
-    tiers: [
-      { level: 1, threshold: 5, label: "Reader" },
-      { level: 2, threshold: 15, label: "Bookworm" },
-      { level: 3, threshold: 25, label: "Dedicated" },
-      { level: 4, threshold: 50, label: "Devoted" },
-      { level: 5, threshold: 100, label: "Master" },
-    ],
-  },
-  {
-    key: "social_star",
-    name: "Social Star",
-    description: "Build your network of friends",
-    metric: "friends",
-    tiers: [
-      { level: 1, threshold: 1, label: "Connected" },
-      { level: 2, threshold: 3, label: "Sociable" },
-      { level: 3, threshold: 5, label: "Popular" },
-      { level: 4, threshold: 10, label: "Influencer" },
-      { level: 5, threshold: 25, label: "Celebrity" },
-    ],
-  },
-];
+import { ACHIEVEMENTS } from "@/data/achievements";
 
 const getMetricValue = (user, metric) => {
   if (!user) return 0;
@@ -266,7 +131,7 @@ const AchievementCircle = ({ achievement, user, onClick }) => {
     >
       {/* Circle */}
       <div
-        className={`w-14 h-14 rounded-full flex items-center justify-center mb-2 ${
+        className={`w-16 h-16 rounded-full flex items-center justify-center mb-2 ${
           isLocked ? "" : !achievement.icon ? colors.bg : ""
         }`}
         style={
@@ -283,7 +148,7 @@ const AchievementCircle = ({ achievement, user, onClick }) => {
           <img
             src={achievement.icon}
             alt={achievement.name}
-            className="w-12 h-12 object-contain"
+            className="w-[60px] h-[60px] object-contain"
           />
         ) : (
           <span className={`text-lg font-black ${colors.text}`}>
@@ -372,7 +237,7 @@ const AchievementDetailRow = ({ achievement, user }) => {
     >
       {/* Circle */}
       <div
-        className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${
+        className={`w-14 h-14 rounded-full flex items-center justify-center shrink-0 ${
           isLocked ? "" : !achievement.icon ? colors.bg : ""
         }`}
         style={
@@ -389,7 +254,7 @@ const AchievementDetailRow = ({ achievement, user }) => {
           <img
             src={achievement.icon}
             alt={achievement.name}
-            className="w-12 h-12 object-contain"
+            className="w-[52px] h-[52px] object-contain"
           />
         ) : (
           <span className={`text-base font-black ${colors.text}`}>
@@ -575,7 +440,7 @@ const AchievementsDialog = ({ open, onClose, user }) => {
 /* ─── Main Compact Card ──────────────────────────────────── */
 const PREVIEW_COUNT = 4;
 
-const AchievementsCard = () => {
+const AchievementsCard = ({ className = "" }) => {
   const user = useSelector((state) => state.auth.user);
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -600,8 +465,8 @@ const AchievementsCard = () => {
   return (
     <>
       <div
-        className="relative rounded-2xl overflow-hidden w-full"
-        style={{ background: "#1a1730", border: "1px solid #1a1a1a" }}
+        className={`relative rounded-2xl overflow-hidden w-full ${className || "border border-[#1a1a1a]"}`}
+        style={!className ? { background: "#1a1730" } : undefined}
       >
         {/* Orange top accent line */}
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-orange-500/60 to-transparent" />

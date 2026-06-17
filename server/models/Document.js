@@ -21,6 +21,10 @@ const documentSchema = new Schema(
       type: String,
       required: true,
     },
+    cloudinaryPublicId: {
+      type: String,
+      default: "",
+    },
     fileSize: {
       type: Number,
       required: true,
@@ -32,10 +36,6 @@ const documentSchema = new Schema(
     chunksStored: {
       type: Number,
       default: 0,
-    },
-    chapters: {
-      type: [Number],
-      default: [],
     },
     uploadDate: { type: Date, default: Date.now },
     lastAccess: { type: Date, default: Date.now },

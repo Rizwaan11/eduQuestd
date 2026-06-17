@@ -1,69 +1,53 @@
 import Document from "../models/Document.js";
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { getVectorStore } from "../database/dbConnect.js";
+import { getVectorStore, getChunksCollection } from "../database/dbConnect.js";
 import fs from "fs/promises";
-import { uploadOnCloudinary } from "../utils/cloudinary.js";
+import { uploadOnCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 
-function detectChapterFromText(text) {
-  const patterns = [
-    /\bChapter\s+(\d+)/i,
-    /\bCh[\.\s]+(\d+)/i,
-    /^(\d+)\.\s+[A-Z]/m,
-    /\bUnit\s+(\d+)/i,
-    /\bModule\s+(\d+)/i,
-    /\bPart\s+(\d+)/i,
-    /\bSection\s+(\d+)/i,
-  ];
+// Detects non-content chunks: title page, table of contents, alphabetical
+// index, bibliography, acknowledgement name-lists. These are keyword-dense
+// fragments with no real sentences — they otherwise outrank actual prose in
+// vector search and pollute chat/quiz/explain. Real prose almost always has at
+// least one sentence-ending period per ~570-char chunk; these lists have none.
+function isLowValueChunk(text) {
+  const t = (text || "").trim();
+  if (t.length < 50) return true;
 
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      return parseInt(match[1], 10);
-    }
-  }
-  return null;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length < 12) return true;
+
+  const sentenceEnders = (t.match(/[.!?](\s|$)/g) || []).length;
+  if (sentenceEnders > 0) return false;
+
+  const commaRatio = (t.match(/,/g) || []).length / words.length;
+  const digitRatio = (t.match(/\d/g) || []).length / t.length;
+  return commaRatio >= 0.08 || digitRatio >= 0.1;
 }
 
+// Free-tier embedding budget is ~100 requests/minute, counted PER TEXT. So a
+// batch of <=90 texts fits inside one minute's window; bigger docs are paced
+// one batch per minute. MAX_CHUNKS keeps a single upload to a few minutes.
+const BATCH_SIZE = 90;
+const MAX_CHUNKS = 270; // ~3 batches ≈ ≤2 min upload
+const PACE_MS = 60000; // wait out the per-minute window between batches
+
 export const uploadDocument = asyncHandler(async (req, res) => {
+  let document = null;
+
   try {
     if (!req.file) throw new ApiError(400, "Please upload a PDF file");
-
-    let filePath = req.file.path;
     const { title } = req.body;
-
     if (!title) throw new ApiError(400, "Please provide a document title");
 
-    const document = await Document.create({
-      userId: req.user._id,
-      title,
-      fileName: req.file.originalname,
-      filePath: "pending",
-      fileSize: req.file.size,
-      status: "processing",
-    });
+    const filePath = req.file.path;
 
     console.log("Step 1: Loading PDF with LangChain...");
     const loader = new PDFLoader(filePath);
     const docs = await loader.load();
-
-    let currentChapter = 1;
-    const pageChapterMap = {};
-
-    for (const doc of docs) {
-      const pageNum =
-        doc.metadata?.loc?.pageNumber ??
-        (doc.metadata?.page != null ? doc.metadata.page + 1 : null) ??
-        1;
-      const detected = detectChapterFromText(doc.pageContent);
-      if (detected !== null) {
-        currentChapter = detected;
-      }
-      pageChapterMap[pageNum] = currentChapter;
-    }
 
     console.log("Step 2: Splitting text into chunks...");
     const splitter = new RecursiveCharacterTextSplitter({
@@ -72,7 +56,36 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     });
     const splitDocs = await splitter.splitDocuments(docs);
 
-    splitDocs.forEach((doc, index) => {
+    // Drop non-content chunks (title/TOC/index/bibliography/acknowledgements)
+    // so they don't pollute retrieval across chat, quiz, and explain.
+    const contentDocs = splitDocs.filter((d) => !isLowValueChunk(d.pageContent));
+    console.log(
+      `Filtered ${splitDocs.length - contentDocs.length} low-value chunks; ${contentDocs.length} remain.`,
+    );
+
+    if (contentDocs.length === 0) {
+      throw new ApiError(
+        400,
+        "No readable text found. Scanned or image-only PDFs aren't supported — please upload a text-based PDF.",
+      );
+    }
+    if (contentDocs.length > MAX_CHUNKS) {
+      throw new ApiError(
+        413,
+        `This PDF is too large for the demo's free-tier limit (${contentDocs.length} chunks; max ${MAX_CHUNKS}). Please upload a shorter document.`,
+      );
+    }
+
+    document = await Document.create({
+      userId: req.user._id,
+      title,
+      fileName: req.file.originalname,
+      filePath: "pending",
+      fileSize: req.file.size,
+      status: "processing",
+    });
+
+    contentDocs.forEach((doc, index) => {
       const pageNum =
         doc.metadata?.loc?.pageNumber ??
         (doc.metadata?.page != null ? doc.metadata.page + 1 : null) ??
@@ -82,45 +95,68 @@ export const uploadDocument = asyncHandler(async (req, res) => {
         documentId: document._id.toString(),
         chunkIndex: index,
         pageNumber: pageNum,
-        chapterNumber: pageChapterMap[pageNum] || 1,
         fileName: req.file.originalname,
       };
     });
 
     console.log("Step 3: Uploading to Cloudinary...");
     const cloudinaryResponse = await uploadOnCloudinary(filePath);
+    if (!cloudinaryResponse) throw new ApiError(500, "Failed to upload file to storage.");
 
-    if (!cloudinaryResponse) {
-      throw new Error("Failed to upload to Cloudinary");
-    }
-
-    console.log("Step 4: Storing chunks in Vector DB...");
+    console.log("Step 4: Embedding + storing chunks...");
     const vectorStore = getVectorStore();
-    const BATCH_SIZE = 50;
+    const totalBatches = Math.ceil(contentDocs.length / BATCH_SIZE);
 
-    for (let i = 0; i < splitDocs.length; i += BATCH_SIZE) {
-      const batch = splitDocs.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < contentDocs.length; i += BATCH_SIZE) {
+      const batch = contentDocs.slice(i, i + BATCH_SIZE);
+      console.log(`⏳ Embedding batch ${Math.floor(i / BATCH_SIZE) + 1} of ${totalBatches} (${batch.length} chunks)...`);
 
-      console.log(`⏳ Embedding batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(splitDocs.length / BATCH_SIZE)}...`);
-      await vectorStore.addDocuments(batch);
+      // Embed explicitly so a rate-limit (429) surfaces instead of being
+      // silently stored as empty vectors (LangChain returns [] on failure).
+      const vectors = await vectorStore.embeddings.embedDocuments(
+        batch.map((d) => d.pageContent),
+      );
+      if (vectors.some((v) => !v || v.length === 0)) {
+        throw new ApiError(
+          429,
+          "Embedding rate limit reached. Your document was not saved — please wait about a minute and try again.",
+        );
+      }
+      await vectorStore.addVectors(vectors, batch);
 
-      if (i + BATCH_SIZE < splitDocs.length) {
-        await new Promise((resolve) => setTimeout(resolve, 4000));
+      // Pace under the free-tier per-minute limit before the next batch.
+      if (i + BATCH_SIZE < contentDocs.length) {
+        await new Promise((resolve) => setTimeout(resolve, PACE_MS));
       }
     }
 
-    const chaptersArr = [...new Set(Object.values(pageChapterMap))].sort((a, b) => a - b);
-
     document.filePath = cloudinaryResponse.secure_url;
+    document.cloudinaryPublicId = cloudinaryResponse.public_id;
     document.totalPages = docs.length;
-    document.chunksStored = splitDocs.length;
-    document.chapters = chaptersArr;
+    document.chunksStored = contentDocs.length;
     document.status = "ready";
     await document.save();
 
     return res
       .status(201)
       .json(new ApiResponse(201, { data: document }, "Document uploaded successfully."));
+  } catch (err) {
+    // Roll everything back so we never leave a stuck "processing" document or
+    // orphaned/empty chunks: purge chunks, the Cloudinary file, and the record.
+    if (document?._id) {
+      const id = document._id.toString();
+      try {
+        const chunks = getChunksCollection();
+        if (chunks) await chunks.deleteMany({ documentId: id });
+      } catch (e) {
+        console.error("Rollback: chunk cleanup failed:", e.message);
+      }
+      if (document.cloudinaryPublicId || (document.filePath && document.filePath !== "pending")) {
+        await deleteFromCloudinary(document.cloudinaryPublicId || document.filePath);
+      }
+      await Document.deleteOne({ _id: document._id }).catch(() => {});
+    }
+    throw err;
   } finally {
     try {
       if (req.file?.path) {
@@ -165,11 +201,38 @@ export const deleteDocument = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Not authorized");
   }
 
+  const documentId = document._id.toString();
+
+  // 1. Purge the embedded chunks from the vector collection so they don't
+  //    linger as orphaned, still-searchable vectors after the doc is gone.
+  let deletedChunks = 0;
+  try {
+    const chunks = getChunksCollection();
+    if (chunks) {
+      const result = await chunks.deleteMany({ documentId });
+      deletedChunks = result.deletedCount || 0;
+    }
+  } catch (err) {
+    console.error("Failed to delete vector chunks:", err.message);
+  }
+
+  // 2. Remove the original PDF from Cloudinary (best-effort; never blocks delete).
+  //    Prefer the stored public_id; fall back to parsing the delivery URL for
+  //    documents uploaded before that field existed.
+  await deleteFromCloudinary(document.cloudinaryPublicId || document.filePath);
+
+  // 3. Remove the document record itself.
   await document.deleteOne();
 
   return res
     .status(200)
-    .json(new ApiResponse(200, null, "Document deleted successfully"));
+    .json(
+      new ApiResponse(
+        200,
+        { deletedChunks },
+        "Document and all associated data deleted successfully",
+      ),
+    );
 });
 
 export const updateDocument = asyncHandler(async (req, res) => {
